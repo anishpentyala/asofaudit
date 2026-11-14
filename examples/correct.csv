@@ -1,0 +1,4 @@
+request_id,feature,version_id
+prediction-1,balance,balance-v1
+prediction-2,balance,balance-v2
+prediction-3,balance,
