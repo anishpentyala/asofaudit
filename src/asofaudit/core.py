@@ -8,6 +8,7 @@ import os
 import re
 import sqlite3
 import tempfile
+from collections.abc import Mapping
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -171,6 +172,7 @@ def audit(
     *,
     features,
     max_age_us=None,
+    feature_max_age_us=None,
     examples=0,
     max_rows=1000000,
     max_bytes=268435456,
@@ -182,6 +184,8 @@ def audit(
     Sources are CSV paths. Features must be an explicit unique sequence of names.
     max_age_us is inclusive event age, not age since ingestion. All limits are per
     input except max_pairs. Scratch contains plaintext identifiers and times.
+    feature_max_age_us optionally maps EVERY requested feature to integer event
+    microseconds or None (unlimited), instead of a global max_age_us.
     """
     try:
         history, requests, selections = [
@@ -218,6 +222,25 @@ def audit(
         _integer(max_age_us, "max_age_us", 0)
         if max_age_us > 315537897599999999:
             raise AuditError("max_age_us exceeds supported datetime range")
+    if feature_max_age_us is not None:
+        if max_age_us is not None:
+            raise AuditError("global and per-feature age limits are mutually exclusive")
+        if not isinstance(feature_max_age_us, Mapping):
+            raise AuditError("feature_max_age_us must be a complete mapping")
+        if set(feature_max_age_us) != set(features):
+            raise AuditError("feature age limits must cover exactly requested features")
+        # Copy in declared feature order so caller mutation cannot change policy
+        # partway through an audit, and report the exact normalized policy used.
+        age_limits = {feature: feature_max_age_us[feature] for feature in features}
+        for limit in age_limits.values():
+            if limit is not None:
+                _integer(limit, "feature age limit", 0)
+                if limit > 315537897599999999:
+                    raise AuditError(
+                        "feature age limit exceeds supported datetime range"
+                    )
+    else:
+        age_limits = {feature: max_age_us for feature in features}
     receipts = {}
     try:
         with tempfile.TemporaryDirectory(prefix="asofaudit-", dir=temp_dir) as scratch:
@@ -313,9 +336,10 @@ def audit(
                     for position, feature in enumerate(features):
                         params = [entity, feature, when, when]
                         query = "SELECT version FROM history WHERE entity=? AND feature=? AND event<=? AND known<=? AND eligible=1"
-                        if max_age_us is not None:
+                        age_limit = age_limits[feature]
+                        if age_limit is not None:
                             query += " AND event>=?"
-                            params.append(when - max_age_us)
+                            params.append(when - age_limit)
                         query += " ORDER BY event DESC, known DESC LIMIT 1"
                         found = db.execute(query, params).fetchone()
                         expected = found[0] if found else ""
@@ -329,7 +353,7 @@ def audit(
                             expected_missing += 1
                             by_feature[feature]["expected_missing"] += 1
                         reason = _reason(
-                            selected, expected, db, entity, feature, when, max_age_us
+                            selected, expected, db, entity, feature, when, age_limit
                         )
                         if reason:
                             reasons[reason] = reasons.get(reason, 0) + 1
@@ -372,6 +396,8 @@ def audit(
                     "examples": evidence,
                     "examples_omitted": violations - len(evidence),
                 }
+                if feature_max_age_us is not None:
+                    report["policy"]["feature_max_age_us"] = age_limits
             finally:
                 db.close()
         return report
