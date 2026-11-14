@@ -133,8 +133,12 @@ Limits default to 1,000,000 rows **per input**, 256 MiB bytes **per input**, and
 1,000,000 request-feature pairs. Configure with `--max-rows`, `--max-bytes`, and
 `--max-pairs`. Python's CSV field-size limit also applies. Crossing any limit fails
 the whole audit. SQLite cache is advisory 8 MiB; this is not a hard RAM/disk/time
-bound. SQLite indexes consume extra disk. Large histories of not-yet-known
-versions for one entity/feature can make lookups slow. No runtime bound or
+bound. SQLite indexes consume extra disk. Requests are evaluated internally in prediction-time order. Each history row
+enters a partial lookup index only when its known time has arrived, avoiding
+repeated scans over future corrections for every prediction. Bounded examples
+still use request-ID order and supplied feature order, independent of evaluation
+order. The database writes an eligibility flag and maintains an extra known-time
+index; this can add disk/I/O cost on ordinary histories. No runtime bound or
 large-scale performance claim is made.
 
 ## What this does not establish
