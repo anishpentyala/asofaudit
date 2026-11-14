@@ -2,6 +2,7 @@
 
 import csv
 import hashlib
+import heapq
 import io
 import os
 import re
@@ -152,6 +153,17 @@ def _reason(selected, expected, db, entity, feature, when, ttl):
     return "not_latest"
 
 
+class _EarlierEvidence:
+    """Reverse key comparison keeps the latest retained example at heap root."""
+
+    def __init__(self, key, value):
+        self.key = key
+        self.value = value
+
+    def __lt__(self, other):
+        return self.key > other.key
+
+
 def audit(
     history,
     requests,
@@ -221,16 +233,19 @@ def audit(
                 db.executescript("""
                     CREATE TABLE history(version TEXT PRIMARY KEY, entity TEXT NOT NULL,
                         feature TEXT NOT NULL, event INTEGER NOT NULL, known INTEGER NOT NULL,
+                        eligible INTEGER NOT NULL DEFAULT 0,
                         UNIQUE(entity,feature,event,known));
-                    CREATE INDEX lookup ON history(entity,feature,event DESC,known DESC);
+                    CREATE INDEX lookup ON history(entity,feature,event DESC,known DESC) WHERE eligible=1;
+                    CREATE INDEX arrival ON history(known);
                     CREATE TABLE requests(id TEXT PRIMARY KEY, entity TEXT NOT NULL, at INTEGER NOT NULL);
+                    CREATE INDEX request_time ON requests(at,id);
                     CREATE TABLE selections(request TEXT NOT NULL, feature TEXT NOT NULL,
                         version TEXT NOT NULL, PRIMARY KEY(request,feature));
                 """)
                 with _rows(history, "history", receipts, max_bytes, max_rows) as rows:
                     for version, entity, feature, event, known in rows:
                         db.execute(
-                            "INSERT INTO history VALUES(?,?,?,?,?)",
+                            "INSERT INTO history(version,entity,feature,event,known) VALUES(?,?,?,?,?)",
                             (version, entity, feature, instant(event), instant(known)),
                         )
                 with _rows(requests, "requests", receipts, max_bytes, max_rows) as rows:
@@ -281,12 +296,23 @@ def audit(
                     feature: {"checked": 0, "violations": 0, "expected_missing": 0}
                     for feature in features
                 }
+                # Activate each history row at most once. The partial lookup index
+                # contains only versions already known at the current request time.
+                # Requests are chronological internally; examples retain the public
+                # request-ID/feature-order contract through a bounded max heap.
+                previous = -9223372036854775808
                 for request, entity, when in db.execute(
-                    "SELECT id,entity,at FROM requests ORDER BY id"
+                    "SELECT id,entity,at FROM requests ORDER BY at,id"
                 ):
-                    for feature in features:
+                    if when != previous:
+                        db.execute(
+                            "UPDATE history SET eligible=1 WHERE known>? AND known<=?",
+                            (previous, when),
+                        )
+                        previous = when
+                    for position, feature in enumerate(features):
                         params = [entity, feature, when, when]
-                        query = "SELECT version FROM history WHERE entity=? AND feature=? AND event<=? AND known<=?"
+                        query = "SELECT version FROM history WHERE entity=? AND feature=? AND event<=? AND known<=? AND eligible=1"
                         if max_age_us is not None:
                             query += " AND event>=?"
                             params.append(when - max_age_us)
@@ -308,16 +334,24 @@ def audit(
                         if reason:
                             reasons[reason] = reasons.get(reason, 0) + 1
                             by_feature[feature]["violations"] += 1
-                            if len(evidence) < examples:
-                                evidence.append(
+                            if examples:
+                                item = _EarlierEvidence(
+                                    (request, position),
                                     {
                                         "request_id": request,
                                         "feature": feature,
                                         "selected_version": selected,
                                         "expected_version": expected,
                                         "reason": reason,
-                                    }
+                                    },
                                 )
+                                if len(evidence) < examples:
+                                    heapq.heappush(evidence, item)
+                                elif item.key < evidence[0].key:
+                                    heapq.heapreplace(evidence, item)
+                evidence = [
+                    item.value for item in sorted(evidence, key=lambda item: item.key)
+                ]
                 violations = sum(reasons.values())
                 report = {
                     "schema_version": 1,
