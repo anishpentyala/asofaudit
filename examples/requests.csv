@@ -1,0 +1,4 @@
+request_id,entity_id,prediction_at
+prediction-1,customer-1,2024-01-02T00:00:00Z
+prediction-2,customer-1,2024-01-04T00:00:00Z
+prediction-3,customer-2,2024-01-04T00:00:00Z
