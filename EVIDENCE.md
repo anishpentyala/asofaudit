@@ -43,3 +43,17 @@ cleanup, input preservation, and microsecond UTC boundaries.
 
 These are synthetic local tests, not production usage, external adoption,
 Windows/macOS verification, or a proof of leakage-free data.
+
+## Per-feature age policy (November 14, 2026)
+
+The same Feast page was fetched again November 14. Its example places
+`ttl=timedelta(hours=2)` on a `FeatureView` and states:
+
+> Feast will scan backward in time from the entity dataframe timestamp up to a maximum of the TTL time specified.
+
+This motivates auditing differing declared ages together. asofaudit's mapping is
+per exact caller feature name, not a feature-view importer; no complete Feast
+semantic equivalence is claimed. See issue
+https://github.com/anishpentyala/asofaudit/issues/3 for the proposed policy before
+implementation. Tests independently enumerate eligible versions with each
+feature's age and check the complete report and failure behavior.

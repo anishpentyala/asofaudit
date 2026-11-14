@@ -1,0 +1,3 @@
+version_id,entity_id,feature,event_at,known_at
+balance-1,customer-1,balance,2024-01-01T00:00:00Z,2024-01-01T00:00:00Z
+plan-1,customer-1,plan,2024-01-01T00:00:00Z,2024-01-01T00:00:00Z

@@ -74,9 +74,63 @@ For the request's exact entity and feature:
 
 This policy is fixed, not inferred from the manifests. If your pipeline uses
 strict-before times, global snapshot cutoffs, aggregation windows, deletions,
-per-feature TTLs, priorities, or another tie-breaker, this model is not sufficient.
+priorities, or another tie-breaker, this model is not sufficient.
 A version whose known time precedes its event time is permitted but still must
 pass both eligibility comparisons.
+
+### Different age limits for different features
+
+Use `--feature-age-limits ages.json` instead of `--max-age-us` when features
+have different declared freshness requirements:
+
+```json
+{"balance": 86400000000, "plan": null}
+```
+
+```sh
+asofaudit history.csv requests.csv selected.csv \
+  --feature balance --feature plan --feature-age-limits ages.json --examples 5
+```
+
+A complete synthetic example is included:
+
+```sh
+asofaudit examples/feature-ages/history.csv examples/feature-ages/requests.csv \
+  examples/feature-ages/selected.csv --feature balance --feature plan \
+  --feature-age-limits examples/feature-ages/ages.json --examples 5
+```
+
+It exits 0: the two-day-old balance is explicitly absent and the equally old plan
+is still eligible. Replacing `selected.csv` with `stale.csv` exits 1 with one
+`expired` balance selection and an empty expected version.
+
+This declares an inclusive one-day event-age limit for `balance` and explicitly
+no age limit for `plan`. Both still require event and known times at or before
+the prediction. It does not use the current clock or age since ingestion.
+
+The JSON object must contain **exactly every requested feature**, with exact
+names. No missing features, extras, defaults, or inheritance. Values are integer
+microseconds from 0 through 315537897599999999, or `null` for unlimited. Booleans,
+floats (including `1.0`), strings, negative or out-of-range values, duplicate
+keys (including escaped aliases), and non-finite numbers are invalid. The file
+must be UTF-8 (optional BOM), at most 1 MiB, and contain one JSON object. Invalid
+policy or manifests exit 2 without a partial JSON report. The policy file is
+read once and does not change the three CSV per-input byte/row limits.
+
+The library equivalent is
+`audit(..., features=['balance', 'plan'], feature_max_age_us={'balance': 86400000000, 'plan': None})`.
+It copies the complete mapping before reading inputs. This mode cannot be
+combined with a non-`None` global `max_age_us`. Omitting it preserves the existing
+global/no-limit mode and report shape.
+
+In this opt-in mode, schema-version-1 `policy` additionally contains the complete
+normalized `feature_max_age_us` mapping; `max_age_us` is `null` because there is no
+global limit. Consumers must read the per-feature mapping when present, not
+interpret that global `null` as making every feature unlimited. The normalized
+values are the policy used by the audit; the JSON file's raw bytes are not hashed
+or added to the three CSV receipts. Keep the report if policy provenance matters.
+This is explicit caller configuration, not an import of Feast feature-view TTLs
+or a complete feature-store compatibility adapter.
 
 A known selected version that violates the policy produces one reason, in this
 precedence: `wrong_entity`, `wrong_feature`, `future_event`, `not_yet_known`,
