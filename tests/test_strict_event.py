@@ -236,4 +236,4 @@ class StrictEventTests(unittest.TestCase):
                         feature_max_age_us=ages,
                     )["ok"],
                     (case, strict),
-  )
+                )
