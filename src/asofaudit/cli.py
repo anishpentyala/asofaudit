@@ -48,6 +48,11 @@ def main(argv=None):
     ages = parser.add_mutually_exclusive_group()
     ages.add_argument("--max-age-us", type=int)
     ages.add_argument("--feature-age-limits", metavar="JSON_FILE")
+    parser.add_argument(
+        "--strict-event-before",
+        action="store_true",
+        help="exclude event_at equal to prediction_at; known time remains inclusive",
+    )
     parser.add_argument("--examples", type=int, default=0)
     parser.add_argument("--max-rows", type=int, default=1000000)
     parser.add_argument("--max-bytes", type=int, default=268435456)

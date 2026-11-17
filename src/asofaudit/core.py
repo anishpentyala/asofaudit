@@ -133,7 +133,7 @@ def _rows(path, kind, receipts, max_bytes, max_rows):
         raise AuditError("%s: %s" % (kind, exc)) from exc
 
 
-def _reason(selected, expected, db, entity, feature, when, ttl):
+def _reason(selected, expected, db, entity, feature, when, ttl, strict_event_before):
     if selected == expected:
         return None
     if not selected:
@@ -147,6 +147,8 @@ def _reason(selected, expected, db, entity, feature, when, ttl):
         return "wrong_feature"
     if event[2] > when:
         return "future_event"
+    if strict_event_before and event[2] == when:
+        return "event_at_prediction"
     if event[3] > when:
         return "not_yet_known"
     if ttl is not None and when - event[2] > ttl:
@@ -173,6 +175,7 @@ def audit(
     features,
     max_age_us=None,
     feature_max_age_us=None,
+    strict_event_before=False,
     examples=0,
     max_rows=1000000,
     max_bytes=268435456,
@@ -186,6 +189,8 @@ def audit(
     input except max_pairs. Scratch contains plaintext identifiers and times.
     feature_max_age_us optionally maps EVERY requested feature to integer event
     microseconds or None (unlimited), instead of a global max_age_us.
+    strict_event_before excludes equal event timestamps only. Known-time and
+    maximum event age remain inclusive. It must be an actual bool.
     """
     try:
         history, requests, selections = [
@@ -241,6 +246,9 @@ def audit(
                     )
     else:
         age_limits = {feature: max_age_us for feature in features}
+    if type(strict_event_before) is not bool:
+        raise AuditError("strict_event_before must be a boolean")
+    event_operator = "<" if strict_event_before else "<="
     receipts = {}
     try:
         with tempfile.TemporaryDirectory(prefix="asofaudit-", dir=temp_dir) as scratch:
@@ -335,7 +343,11 @@ def audit(
                         previous = when
                     for position, feature in enumerate(features):
                         params = [entity, feature, when, when]
-                        query = "SELECT version FROM history WHERE entity=? AND feature=? AND event<=? AND known<=? AND eligible=1"
+                        query = (
+                            "SELECT version FROM history WHERE entity=? AND feature=? AND event"
+                            + event_operator
+                            + "? AND known<=? AND eligible=1"
+                        )
                         age_limit = age_limits[feature]
                         if age_limit is not None:
                             query += " AND event>=?"
@@ -353,7 +365,14 @@ def audit(
                             expected_missing += 1
                             by_feature[feature]["expected_missing"] += 1
                         reason = _reason(
-                            selected, expected, db, entity, feature, when, age_limit
+                            selected,
+                            expected,
+                            db,
+                            entity,
+                            feature,
+                            when,
+                            age_limit,
+                            strict_event_before,
                         )
                         if reason:
                             reasons[reason] = reasons.get(reason, 0) + 1
@@ -383,7 +402,11 @@ def audit(
                     "policy": {
                         "features": list(features),
                         "max_age_us": max_age_us,
-                        "eligibility": "event_at <= prediction_at and known_at <= prediction_at",
+                        "eligibility": (
+                            "event_at "
+                            + event_operator
+                            + " prediction_at and known_at <= prediction_at"
+                        ),
                         "selection": "maximum (event_at, known_at); equal pairs invalid",
                     },
                     "inputs": receipts,

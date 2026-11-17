@@ -73,7 +73,7 @@ For the request's exact entity and feature:
 4. If no version is eligible, expect an explicit empty selected version.
 
 This policy is fixed, not inferred from the manifests. If your pipeline uses
-strict-before times, global snapshot cutoffs, aggregation windows, deletions,
+strict known-before times, global snapshot cutoffs, aggregation windows, deletions,
 priorities, or another tie-breaker, this model is not sufficient.
 A version whose known time precedes its event time is permitted but still must
 pass both eligibility comparisons.
@@ -228,3 +228,34 @@ wrong entity/feature and absent selections, exact age boundaries, UTC offsets,
 invalid inputs, complete pair coverage, storage errors, cleanup, input-byte
 preservation, and POSIX scratch modes. Linux local verification is separate from
 hosted CI. No Windows, macOS, deployment, adoption, or real-production-data claims.
+
+
+## Opt-in strict event boundary
+
+Some backward as-of pipelines deliberately exclude events at the exact prediction
+instant. [pandas documents this choice as `allow_exact_matches=False`](https://pandas.pydata.org/docs/reference/api/pandas.merge_asof.html).
+To audit that event-time policy, add `--strict-event-before`, or call
+`audit(..., strict_event_before=True)`. The default remains `False`.
+
+This changes **only** event eligibility to `event_at < prediction_at`. Known time
+remains inclusive: `known_at <= prediction_at`, including corrections learned at
+the prediction instant. The maximum `(event_at, known_at)` choice, exact UTC
+microseconds, complete coverage, input receipts and example order stay the same.
+This is not a full pandas compatibility adapter or a strict known-time policy.
+
+Global and per-feature age limits still use inclusive event age. With age zero
+and strict event eligibility, no version is eligible. At age one microsecond,
+an event exactly one microsecond earlier is eligible if already known.
+The API option must be an actual boolean; `0`, `1`, strings and `None` are invalid.
+
+The report's existing `policy.eligibility` string records `<` instead of `<=` for
+the event clause. No extra report fields are added. Default-mode reports remain
+unchanged. A selected version whose event equals prediction time has the new
+mutually exclusive reason `event_at_prediction`, between `future_event` and
+`not_yet_known` in the documented precedence, only in strict mode. UTC-equivalent
+strings compare equal. Future events still use `future_event`.
+
+Tests include 150 seeded histories in both boundary modes, checked against an
+independent nested-loop integer-microsecond oracle with per-feature ages, exact
+selection replay, equality/UTC boundaries, reason precedence and CLI behavior.
+This is local synthetic verification, not real-data validation or adoption.
