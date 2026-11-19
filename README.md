@@ -148,8 +148,11 @@ asofaudit history.csv requests.csv selected.csv \
 
 - Exit **0**: complete audit, every requested pair matches this policy.
 - Exit **1**: complete audit, some pairs violate this policy. JSON remains complete.
-- Exit **2**: invalid/incomplete inputs, bad options, resource limit, or storage
-  error. Error on stderr; **no JSON report** on stdout.
+- Exit **2**: invalid/incomplete inputs, bad options, resource limit, storage
+  error, or output I/O failure. Invalid input emits no JSON report on stdout.
+  Output failures cannot retract bytes already written to a failing pipe or
+  filesystem; those bytes are not a complete report. Diagnostics on stderr are
+  best effort if that destination also fails.
 
 JSON schema version 1 includes counts, per-feature counts, mutually exclusive
 reason counts, declared policy, and SHA256/byte/row counts of each input. Digests
