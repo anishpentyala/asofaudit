@@ -67,8 +67,46 @@ def main(argv=None):
             if args.feature_max_age_us is None:
                 raise AuditError("feature age policy must be a complete JSON object")
         report = audit(**vars(args))
-    except AuditError as exc:
-        print("asofaudit: %s" % exc, file=sys.stderr)
+        # Serialize completely before the first write, then check buffered I/O.
+        output = json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2) + "\n"
+        sys.stdout.write(output)
+        sys.stdout.flush()
+        return 0 if report["ok"] else 1
+    except (AuditError, MemoryError) as exc:
+        try:
+            print(
+                "asofaudit: %s" % (str(exc) or "insufficient memory"),
+                file=sys.stderr,
+                flush=True,
+            )
+        except OSError:
+            pass
         return 2
-    print(json.dumps(report, ensure_ascii=True, sort_keys=True, indent=2))
-    return 0 if report["ok"] else 1
+    except OSError:
+        return 2
+
+
+def cli():
+    """Process entrypoint: a failed final flush must retain exit2.
+
+    main() leaves streams open for its caller. Only the executable entrypoint
+    closes already-failing streams so interpreter shutdown cannot retry them
+    and replace the documented exit code with CPython's exit120.
+    """
+    try:
+        code = main()
+    except SystemExit as exc:
+        # argparse also writes buffered help and error output.
+        code = exc.code
+    except OSError:
+        code = 2
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except OSError:
+            code = 2
+            try:
+                stream.close()
+            except OSError:
+                pass
+    return code
